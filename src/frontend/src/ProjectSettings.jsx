@@ -217,6 +217,26 @@ export default function ProjectSettings({
     }
   }
 
+  function applySaved(saved, syncTeam) {
+    setRepoSnapshot({
+      name: saved.name,
+      url: saved.repositoryUrl,
+      privateRepository: saved.privateRepository,
+      credential: (saved.credentialRef || "").trim(),
+      cache: !!saved.cache,
+      teamId: saved.teamId == null ? "" : String(saved.teamId),
+    });
+    setName(saved.name);
+    setUrl(saved.repositoryUrl);
+    setPriv(saved.privateRepository);
+    setCredential(saved.credentialRef || "");
+    setCache(!!saved.cache);
+    if (syncTeam) {
+      setTeamId(saved.teamId == null ? "" : String(saved.teamId));
+    }
+    onSaved(saved);
+  }
+
   async function submit(event) {
     event?.preventDefault();
     if (busy || !dirty) return;
@@ -224,33 +244,27 @@ export default function ProjectSettings({
     setError("");
     setSuccess("");
     if (tab === "general") {
+      let committed = null;
       try {
-        let saved = project;
         if (repoDirty) {
-          saved = await repoPut();
+          committed = await repoPut();
         }
         if (teamDirty) {
-          saved = await api(`/projects/${project.id}/team-assignment`, {
+          committed = await api(`/projects/${project.id}/team-assignment`, {
             method: "PUT",
             body: JSON.stringify({ teamId: teamId ? Number(teamId) : null }),
           });
         }
-        setRepoSnapshot({
-          name: saved.name,
-          url: saved.repositoryUrl,
-          privateRepository: saved.privateRepository,
-          credential: (saved.credentialRef || "").trim(),
-          cache: !!saved.cache,
-          teamId: saved.teamId == null ? "" : String(saved.teamId),
-        });
-        setName(saved.name);
-        setUrl(saved.repositoryUrl);
-        setPriv(saved.privateRepository);
-        setCredential(saved.credentialRef || "");
-        setCache(!!saved.cache);
-        setTeamId(saved.teamId == null ? "" : String(saved.teamId));
-        onSaved(saved);
+        if (committed) {
+          applySaved(committed, true);
+        }
       } catch (e) {
+        if (committed) {
+          // repoPut() already persisted on the server before team-assignment failed:
+          // commit the saved repository snapshot and notify the parent while keeping
+          // the unsaved team selection in place so the user can retry or discard.
+          applySaved(committed, false);
+        }
         setError(e.message || "Unable to save the project.");
       } finally {
         setBusy(false);

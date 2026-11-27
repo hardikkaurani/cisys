@@ -602,4 +602,59 @@ describe("unsaved-changes guard cooperation with ProjectSettings", () => {
     expect(confirm).not.toHaveBeenCalled();
     confirm.mockRestore();
   });
+
+  it("commits saved repository fields when team assignment fails", async () => {
+    const calls = [];
+    const onSaved = vi.fn();
+    let failTeam = true;
+    const api = vi.fn(async (path, opts = {}) => {
+      calls.push([
+        opts.method || "GET",
+        path,
+        opts.body ? JSON.parse(opts.body) : null,
+      ]);
+      if (path === "/projects/1" && opts.method === "PUT") {
+        return { ...project(), name: JSON.parse(opts.body).name };
+      }
+      if (path === "/projects/1/team-assignment" && opts.method === "PUT") {
+        if (failTeam) throw new Error("Team assignment rejected");
+        return { ...project(), name: "renamed", teamId: 7 };
+      }
+      throw new Error("unexpected " + path);
+    });
+    render(
+      <ProjectSettings
+        project={project()}
+        api={api}
+        teams={[{ id: 7, name: "build", role: "LEAD" }]}
+        isAdmin={false}
+        user={userFor()}
+        onSaved={onSaved}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "renamed" },
+    });
+    fireEvent.change(document.getElementById("settings-team"), {
+      target: { value: "7" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(onSaved).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "renamed", teamId: null }),
+    );
+    expect(document.getElementById("settings-team").value).toBe("7");
+
+    // Retrying Save only retries the failed team-assignment request.
+    failTeam = false;
+    calls.length = 0;
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await vi.waitFor(() =>
+      expect(calls).toEqual([
+        ["PUT", "/projects/1/team-assignment", { teamId: 7 }],
+      ]),
+    );
+  });
 });
